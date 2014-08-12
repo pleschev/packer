@@ -36,8 +36,10 @@ func (s *StepCreateTags) Run(state multistep.StateBag) multistep.StepAction {
 					return time.Now().Add(30 * time.Second)
 				},
 				DialTimeout: 10 * time.Second,
-				MaxTries:    3,
+				MaxTries:    100,
 				ShouldRetry: func(req *http.Request, res *http.Response, err error) bool {
+					ui.Say(fmt.Sprintf("Checking error (%s) to see if should retry.", err))
+
 					retry := false
 
 					// Retry if there's a temporary network error.
