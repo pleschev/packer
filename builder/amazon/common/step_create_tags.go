@@ -2,6 +2,10 @@ package common
 
 import (
 	"fmt"
+	"net"
+	"net/http"
+	"time"
+
 	"github.com/mitchellh/goamz/aws"
 	"github.com/mitchellh/goamz/ec2"
 	"github.com/mitchellh/multistep"
@@ -27,7 +31,35 @@ func (s *StepCreateTags) Run(state multistep.StateBag) multistep.StepAction {
 				ec2Tags = append(ec2Tags, ec2.Tag{key, value})
 			}
 
-			regionconn := ec2.New(ec2conn.Auth, aws.Regions[region])
+			customClient := &ResilientTransport{
+				Deadline: func() time.Time {
+					return time.Now().Add(30 * time.Second)
+				},
+				DialTimeout: 10 * time.Second,
+				MaxTries:    3,
+				ShouldRetry: func(req *http.Request, res *http.Response, err error) bool {
+					retry := false
+
+					// Retry if there's a temporary network error.
+					if neterr, ok := err.(net.Error); ok {
+						if neterr.Temporary() {
+							retry = true
+						}
+					}
+
+					// Retry if we get a 5xx series error.
+					if res != nil {
+						if res.StatusCode >= 500 && res.StatusCode < 600 {
+							retry = true
+						}
+					}
+
+					return retry
+				},
+				Wait: aws.ExpBackoff,
+			}
+
+			regionconn := ec2.NewWithClient(ec2conn.Auth, aws.Regions[region], customClient)
 			_, err := regionconn.CreateTags([]string{ami}, ec2Tags)
 			if err != nil {
 				err := fmt.Errorf("Error adding tags to AMI (%s): %s", ami, err)
